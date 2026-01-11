@@ -1,262 +1,194 @@
 import pygetwindow as gw
 import time
-import sys
-import ctypes
-from ctypes import windll
 import HandtrackingModule as htm
 import cv2 as cv
+import numpy as np
+import threading
+import queue
+import time
+import pyautogui
 
 
-SM_CMONITORS = 80
-MONITOR_DEFAULTTONEAREST = 0x00000002
-Def_RES = [1920,1080]
+
+machine_state = 0 
+status_msg = "ROOT: [Index]LeftMon [Peace]RightMon [Spidey]Focus"
+last_executed_gesture = [] 
 
 
-class RECT(ctypes.Structure):
-    _fields_ = [
-        ('left',ctypes.c_long),
-        ('top',ctypes.c_long),
-        ('right',ctypes.c_long),
-        ('bottom',ctypes.c_long),
-    ]
+gesture_queue = queue.Queue()
 
-class MONITORINFO(ctypes.Structure):
-    _fields_=[
-        ('cbSize',ctypes.c_ulong),
-        ('rcMonitor',RECT),
-        ('rcWork',RECT),
-        ('dwFlags',ctypes.c_ulong)
-
-    ]
 
 def get_Active_Window():
 
     try:
         active_Win = gw.getActiveWindow()
-        # print(f'activeWin type : {type(active_Win)}')
-        if active_Win:
-            print(f'active window : {active_Win.width} X{active_Win.height}')
-            print(f'center: {active_Win.centerx} X {active_Win.centery} ')
-
-        else:
-            print("failed to get active Win")
 
     except Exception as e:
         print(f'Error {e}')
-
-def get_monitor_info():
-    num_Monitors = windll.user32.GetSystemMetrics(SM_CMONITORS)    
-    print(f"Monitors : {num_Monitors}")
     
+    return active_Win
 
-    monitors = []
-    
+def state_machine(confirmed_fingers):
 
-
-    def callback(monitor,dc,rect,data):
-        info = MONITORINFO()
-
-        info.cbSize = ctypes.sizeof(MONITORINFO)
+    global machine_state, status_msg, last_executed_gesture
+    active_win=get_Active_Window()
 
 
+    if confirmed_fingers == [0,0,0,0,0,0]:
 
-        if windll.user32.GetMonitorInfoA(monitor,ctypes.byref(info)):
+        if machine_state != 0:
+            machine_state = 0
+            last_executed_gesture = confirmed_fingers
+            status_msg = 'Reset to root'
 
-            monitor_Info = {
-                'handle' : monitor,
-                'left' : info.rcMonitor.left,
-                'top':info.rcMonitor.top,
-                'width': info.rcMonitor.right - info.rcMonitor.left,
-                'height': info.rcMonitor.bottom - info.rcMonitor.top,
-                'work_left': info.rcWork.left,
-                'work_top': info.rcWork.top,
-                'work_width': info.rcWork.right - info.rcWork.left,
-                'work_height': info.rcWork.bottom - info.rcWork.top
+    elif confirmed_fingers != last_executed_gesture:
+        if machine_state == 0:
+
+            if confirmed_fingers == [1, 0, 1, 0, 0, 0]:
+                pyautogui.hotkey('win','shift','left')
+                status_msg = 'Moved to L Monitor'
+                machine_state = 1
+
+            elif confirmed_fingers == [1,0,1,1,0,0]:
+                pyautogui.hotkey('win','shift','right')
+                status_msg = 'Moved to R Monitor'
+                machine_state = 1
+
+            elif confirmed_fingers == [1,1,1,0,0,1]:
+                status_msg = 'Focus on current window'
+                machine_state = 1
+
+            elif confirmed_fingers == [1,0,0,0,0,0]:
+                status_msg = 'Minimize'
+                active_win.minimize()
+                machine_state = 0
+
+            pyautogui.hotkey('esc')
+            time.sleep(1)
+
+        elif machine_state == 1:
+
+            if confirmed_fingers == [1, 0, 1, 0, 0, 0]:
+                if active_win.isMaximized:
+                    active_win.restore()
+                pyautogui.hotkey('win', 'left')
+                status_msg = 'LEFT HALF -> [Index]Top [Peace]Bottom'
+                machine_state = 2
+
+            elif confirmed_fingers == [1, 0, 1, 1, 0, 0]:
+                if active_win.isMaximized:
+                    active_win.restore()
+                pyautogui.hotkey('win', 'right')
+                status_msg = "RIGHT HALF -> [Index]Top [Peace]Bottom"
+                machine_state = 2
+
+            elif confirmed_fingers == [1,1,1,1,1,1]:
+                active_win.maximize()
+                status_msg = "Mxm"
+                machine_state = 0 
+
                 
-            }
-            monitors.append(monitor_Info)
+            pyautogui.hotkey('esc')
+            time.sleep(1)
+
+
+        elif machine_state == 2:
+             
+
+            if confirmed_fingers == [1, 0, 1, 0, 0, 0]:
+                pyautogui.hotkey('win', 'up')
+                status_msg = "Snapped Top. Done."
+                machine_state = 0 
+
+
+            elif confirmed_fingers == [1, 0, 1, 1, 0, 0]:
+                pyautogui.hotkey('win', 'down')
+                status_msg = "Snapped Bottom. Done."
+                machine_state = 0 
+
+            pyautogui.press('esc')
+            time.sleep(1)
             
-        return True
+        last_executed_gesture = confirmed_fingers
+        print(f"Action: {status_msg}")
 
-    MONITORENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool,ctypes.c_ulong,ctypes.c_ulong, ctypes.POINTER(RECT), ctypes.c_long)
+def gesture_worker():
 
-    windll.user32.EnumDisplayMonitors(None,None, MONITORENUMPROC(callback),0)
-
-    monitors.sort(key = lambda m:m['left'])
-
-    
-    for i,m in enumerate(monitors):
-
-        print(print(f"Monitor {i+1}: {m['width']}x{m['height']} at position ({m['left']}, {m['top']})"))
-
-    return monitors
-
-def get_Get_ScaleFactors():
-
-    scale_Factors = []
-
-    monitors = get_monitor_info()
-
-    for id,mon in enumerate(monitors):
-        scale_Factors.append(Def_RES[1]/mon['height'])
-    print (scale_Factors)
-
-    return scale_Factors
-
-def move_Active_Win(mon_Num,byTwo=0,Full=0,byThree=0,move =False):
-    active_Win = gw.getActiveWindow()
-
-    if not active_Win:
-        return False
-
-    monitors = get_monitor_info()
-    scale = get_Get_ScaleFactors()
-
-    if len(monitors)<2:
-        print("only 1 monitor detected")
-        return False
-
-    x_cent,y_cent = active_Win.center
-    x,y= active_Win.topleft
-    
-
-    print(x_cent,y_cent)
-    print(x,y)
-    
-
-    active_monitor = 0
-
-    for id,m in enumerate(monitors):
-        if (m['left']<= x_cent < m['left']+ m['width'])&(m['top']<= y_cent < m['top']+m['height']):
-            active_monitor = id+1
+    while True:
+        
+        fingers = gesture_queue.get()
+        
+        if fingers is None:
             break
-
-
-    print(f'active Monitor : {active_monitor}')
-
-    if byTwo:
-        active_Win.restore()
-        active_Win.resizeTo(int((monitors[active_monitor-1]['width']//2)),int(monitors[active_monitor-1]['height']))
-        active_Win.moveTo(int(monitors[active_monitor-1]['left']),int(monitors[active_monitor-1]['top']))
         
+        state_machine(fingers)
+        gesture_queue.task_done()
 
-    if byThree:
-        active_Win.restore()
-        active_Win.resizeTo(int(monitors[active_monitor-1]['width']//2),int(monitors[active_monitor-1]['height']))
-        active_Win.moveTo(int(monitors[active_monitor-1]['left']+monitors[active_monitor-1]['width']//2),int(monitors[active_monitor-1]['top']))
-
-    if move:
-        active_Win.restore()
-        
-        active_Win.resizeTo(int(monitors[mon_Num]['width']//((scale[mon_Num]))),int(monitors[mon_Num]['height']//(scale[mon_Num])))
-        
-        active_Win.moveTo(monitors[mon_Num]['left'],monitors[mon_Num]['top'])
-
-        print(f'active mon num :{mon_Num}')
-
-    if Full:
-        active_Win.maximize()
-
-    get_Active_Window()
-    get_Get_ScaleFactors()
-    
 def main():
+
+
     pTime = 0
     cTime = 0
+
     capture = cv.VideoCapture(0)
-    if capture.isOpened():
+    if not capture.isOpened():
         print("Error")
-    detector = htm.handDetector()
+        return
     
+    detector = htm.handDetector()
+
+    t = threading.Thread(target=gesture_worker)
+    t.daemon = True
+    t.start()
+
+    print("System Ready. Thread Started.")
+
+
     while True:
         success,frame = capture.read()
+        
 
         if not success:
             print("failed to grab frame")
+            break
+
+        frame = cv.flip(frame,1)
+
         frame = detector.findHands(frame)
         lmList = detector.findPosition(frame)
-        fingerList = detector.fingerCount(lmList)
 
-        # print(fingerList)
-        
+        if lmList != 0:
+
+            confirmed_fingers = detector.getConfirmFL(lmList)
+
+            if confirmed_fingers is not None:
+
+                gesture_queue.put(confirmed_fingers)
+                cv.putText(frame, str(confirmed_fingers), (50, 50), cv.FONT_HERSHEY_PLAIN, 3, (0, 255, 0), 3)
+
+            else:
+                cv.putText(frame, "Stabilizing...", (50, 50), cv.FONT_HERSHEY_PLAIN, 2, (0, 0, 255), 2)
 
         cTime = time.time()
         fps = 1/(cTime-pTime)
         pTime = cTime
 
         cv.putText(frame,str(int(fps)),(10,70),cv.FONT_HERSHEY_PLAIN,3,(255,0,255),3)   
-
-        cv.imshow('Video',frame)
         
+        cv.imshow('Video',frame)
 
         if cv.waitKey(20)&0xFF==ord('d'):
             break
 
 
-        if fingerList == [0,1,0,0,0]:
-            get_monitor_info()
-            get_Active_Window()
-            get_Get_ScaleFactors()
-            move_Active_Win(mon_Num=0,move=True)
 
-        elif fingerList == [0,1,1,0,0]:
-            get_monitor_info()
-            get_Active_Window()
-            get_Get_ScaleFactors()
-            move_Active_Win(mon_Num=1,move=True)
-
-        elif fingerList == [1,1,0,0,0]:
-            get_monitor_info()
-            get_Active_Window()
-            get_Get_ScaleFactors()
-            move_Active_Win(mon_Num=1,byTwo=1)
-        
-        elif fingerList == [1,0,0,0,1]:
-            get_monitor_info()
-            get_Active_Window()
-            get_Get_ScaleFactors()
-            move_Active_Win(mon_Num=1,Full=1)
-
-        elif fingerList == [1,1,1,0,0]:
-            get_monitor_info()
-            get_Active_Window()
-            get_Get_ScaleFactors()
-            move_Active_Win(mon_Num=1,byThree=1)
-        
-        elif fingerList == [1,0,0,0,0]:
-
-            windows_obj = gw.getAllWindows()
-        
-            for window in windows_obj:  
-                if not window.isMinimized:
-                
-                    try:
-                        window.minimize()
-
-                    except Exception as e:
-                        print(f"Error minimizing{e}")
-
-        elif fingerList == [0,0,0,0,1]:
-            windows_obj = gw.getAllWindows()
-        
-            for window in windows_obj:  
-                if window.isMinimized:
-                
-                    try:
-                        window.restore()
-
-                    except Exception as e:
-                        print(f"Error minimizing{e}")
-
-
-
+    gesture_queue.put(None)
+    t.join()
     capture.release()
     cv.destroyAllWindows()
 
-
-if __name__ == '__main__':
+if  __name__ == "__main__":
     main()
-    
    
            
    
