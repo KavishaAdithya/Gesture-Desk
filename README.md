@@ -35,7 +35,6 @@ A Python-based automation tool that utilizes Computer Vision (OpenCV & MediaPipe
 2. Type pyinstaller Window_manage.spec,press Enter
 
 
-```
 
 ### The Workflow (State Machine)
 
@@ -66,6 +65,7 @@ Refine the snap to a specific corner (Quadrant).
 *   Press **'d'** on your keyboard while the video window is focused to stop the program.
 
 ## Project Structure
+
 
 ```text
 ├── main.py                # The main application entry point and state machine logic
